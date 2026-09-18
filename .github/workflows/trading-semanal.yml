@@ -53,7 +53,7 @@ jobs:
           ENVIAR_CORREO_REAL: >-
             ${{ github.event_name == 'schedule' && 'true' ||
                 github.event.inputs.enviar_correo_real }}
-        run: python modelo_v6_robusto.py
+        run: python modelo_v6.py
 
       - name: Guardar el estado actualizado de vuelta al repo
         # Solo si el estado, el ensamble o la tabla realmente cambiaron
