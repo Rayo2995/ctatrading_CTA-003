@@ -1,0 +1,71 @@
+name: AI Trading Challenge - Corrida semanal (CTA-003)
+
+on:
+  # Cada viernes a las 13:00 UTC = 8:00 a.m. hora de Bogota (UTC-5 fijo,
+  # Colombia no tiene horario de verano).
+  schedule:
+    - cron: '0 13 * * 5'
+
+  # Permite correrlo manualmente desde la pestaña "Actions" de GitHub,
+  # eligiendo si es una corrida de prueba o la oficial que envia el
+  # correo real - util para probar sin esperar al viernes.
+  workflow_dispatch:
+    inputs:
+      enviar_correo_real:
+        description: 'Enviar el correo de verdad (true) o solo simular (false)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  correr-modelo:
+    runs-on: ubuntu-latest
+    # Sin este permiso, el job no puede hacer "git push" de vuelta al repo.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Correr el modelo (y enviar correo si corresponde)
+        env:
+          EMAIL_REMITENTE: ${{ secrets.EMAIL_REMITENTE }}
+          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          # La corrida programada (cron, viernes 8am) SIEMPRE es la
+          # oficial: MODO_PRUEBA=false y ENVIAR_CORREO_REAL=true.
+          # Una corrida manual (workflow_dispatch) respeta lo que el
+          # usuario elija en el input de arriba.
+          MODO_PRUEBA_OVERRIDE: >-
+            ${{ github.event_name == 'schedule' && 'false' ||
+                (github.event.inputs.enviar_correo_real == 'true' && 'false' || 'true') }}
+          ENVIAR_CORREO_REAL: >-
+            ${{ github.event_name == 'schedule' && 'true' ||
+                github.event.inputs.enviar_correo_real }}
+        run: python modelo_v6_robusto.py
+
+      - name: Guardar el estado actualizado de vuelta al repo
+        # Solo si el estado, el ensamble o la tabla realmente cambiaron
+        # (una corrida en MODO_PRUEBA no deberia generar cambios en
+        # estado_portafolio.json, por ejemplo).
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add estado_portafolio.json ensamble_v6.joblib backlog_decisiones_v6.csv 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "Actualiza estado semanal (corrida automatica $(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "Sin cambios de estado que subir."
+          fi
