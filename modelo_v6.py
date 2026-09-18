@@ -209,7 +209,7 @@ ARCHIVO_ENSAMBLE = "ensamble_v6.joblib"
 # NUEVO: automatizacion de correo (Sprint 3, adaptado para correr sin
 # supervision en GitHub Actions - sin input() interactivo).
 # ------------------------------------------------------------------
-EMAIL_DESTINATARIO = "jahir.rodriguez@salesiana.edu.co"
+EMAIL_DESTINATARIO = "sebastian.rayo@salesiana.edu.co"
 CODIGO_CUENTA = "CTA-003"
 SMTP_SERVOR = "smtp.gmail.com"
 SMTP_PUERTO = 587
