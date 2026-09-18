@@ -1,0 +1,36 @@
+{
+  "capital_disponible": 7140.68,
+  "semana_actual": 1,
+  "historial": [
+    {
+      "semana": 1,
+      "fecha": "2026-09-18",
+      "ordenes": [
+        {
+          "ticker": "NVDA",
+          "cantidad": 4,
+          "precio_compra_referencia": 213.9
+        },
+        {
+          "ticker": "005930.KS",
+          "cantidad": 4,
+          "precio_compra_referencia": 183.42
+        },
+        {
+          "ticker": "TSM",
+          "cantidad": 1,
+          "precio_compra_referencia": 417.72
+        },
+        {
+          "ticker": "NEM",
+          "cantidad": 7,
+          "precio_compra_referencia": 121.76
+        }
+      ],
+      "evaluado_hit_rate": false
+    }
+  ],
+  "capital_maximo_historico": 10000.0,
+  "circuit_breaker_activo": false,
+  "hit_rate_historico": []
+}
