@@ -83,6 +83,7 @@ import os
 import time
 import joblib
 import smtplib
+import requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -90,7 +91,7 @@ import xgboost as xgb
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from sklearn.metrics import roc_auc_score
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ------------------------------------------------------------------
 # CONFIGURACION GENERAL (heredada de v4/v5)
@@ -203,13 +204,43 @@ UMBRAL_HIT_RATE_ALERTA = 0.40         # bajo esto, se alerta model drift
 # NUEVO v6 - PUNTO 6: cadencia de reentrenamiento
 # ------------------------------------------------------------------
 SEMANAS_ENTRE_REENTRENOS = 3
+# ------------------------------------------------------------------
+# NUEVO v6 - PUNTO 4 (capa 3): guardrail cualitativo con RAG real
+# ------------------------------------------------------------------
+# Retrieval: noticias recientes via yfinance (ya lo usan para precios,
+# sin costo ni API adicional). Generation: Claude lee las noticias y
+# decide si hay algo grave que justifique vetar la compra esta semana.
 ARCHIVO_ENSAMBLE = "ensamble_v6.joblib"
+
+# ------------------------------------------------------------------
+# NUEVO: informe semanal en Markdown (E7 - Reporting)
+# ------------------------------------------------------------------
+CARPETA_INFORMES = "informes"
+# Proveedor del LLM para el guardrail cualitativo: "openrouter" (gratis,
+# recomendado - ver modelos :free en openrouter.ai) o "anthropic" (de
+# pago, Claude directo). Se elige con la variable de entorno
+# RAG_PROVEEDOR; por defecto usa OpenRouter para no depender de un
+# presupuesto pago en un proyecto estudiantil.
+RAG_PROVEEDOR = os.environ.get("RAG_PROVEEDOR", "openrouter").strip().lower()
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+MODELO_LLM_ANTHROPIC = "claude-haiku-4-5-20251001"
+
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+# Modelo gratuito de OpenRouter. Aviso importante: los modelos ":free" de
+# OpenRouter rotan de vez en cuando (algunos se retiran, aparecen otros
+# nuevos) - si este deja de funcionar, revisar la lista actual en
+# https://openrouter.ai/models?max_price=0 y cambiar este valor. No hace
+# falta tocar nada mas del codigo.
+OPENROUTER_MODELO = os.environ.get("OPENROUTER_MODELO", "deepseek/deepseek-v4-flash:free")
+VENTANA_NOTICIAS_DIAS = 7
+MAX_NOTICIAS_POR_TICKER = 8
 
 # ------------------------------------------------------------------
 # NUEVO: automatizacion de correo (Sprint 3, adaptado para correr sin
 # supervision en GitHub Actions - sin input() interactivo).
 # ------------------------------------------------------------------
-EMAIL_DESTINATARIO = "sebastian.rayo@salesiana.edu.co"
+EMAIL_DESTINATARIO = "jahir.rodriguez@salesiana.edu.co"
 CODIGO_CUENTA = "CTA-003"
 SMTP_SERVOR = "smtp.gmail.com"
 SMTP_PUERTO = 587
@@ -531,22 +562,170 @@ def cargar_o_entrenar_ensamble(dataset_pool):
 # NUEVO v6 - PUNTO 4 (capa 3): hook de guardrail cualitativo (RAG)
 # ------------------------------------------------------------------
 
+def obtener_noticias_recientes(ticker, dias=VENTANA_NOTICIAS_DIAS,
+                                max_noticias=MAX_NOTICIAS_POR_TICKER):
+    """RETRIEVAL: trae noticias recientes de yfinance para un ticker y
+    filtra solo las de los ultimos `dias`. Parseo defensivo porque el
+    formato de yf.Ticker(x).news ha cambiado entre versiones de la
+    libreria (algunas anidan los campos bajo "content", otras no)."""
+    try:
+        crudo = yf.Ticker(ticker).news
+    except Exception as e:
+        print(f"  Aviso RAG: no se pudo obtener noticias para {ticker}: {e}")
+        return []
+
+    noticias = []
+    ahora = datetime.now(timezone.utc)
+    for item in (crudo or []):
+        contenido = item.get("content", item) if isinstance(item, dict) else {}
+        titulo = contenido.get("title") or item.get("title")
+        if not titulo:
+            continue
+        resumen = contenido.get("summary") or contenido.get("description") or ""
+
+        fecha_raw = (contenido.get("pubDate") or item.get("providerPublishTime")
+                     or contenido.get("displayTime"))
+        fecha = None
+        if isinstance(fecha_raw, (int, float)):
+            fecha = datetime.fromtimestamp(fecha_raw, tz=timezone.utc)
+        elif isinstance(fecha_raw, str):
+            try:
+                fecha = datetime.fromisoformat(fecha_raw.replace("Z", "+00:00"))
+            except ValueError:
+                fecha = None
+
+        if fecha is not None and (ahora - fecha).days > dias:
+            continue  # demasiado vieja, se ignora
+
+        noticias.append({"titulo": titulo, "resumen": (resumen or "")[:300], "fecha": fecha})
+        if len(noticias) >= max_noticias:
+            break
+
+    return noticias
+
+
+def construir_prompt_rag(ticker, noticias):
+    lineas = []
+    for n in noticias:
+        fecha_txt = n["fecha"].strftime("%Y-%m-%d") if n["fecha"] else "fecha desconocida"
+        linea = f"- [{fecha_txt}] {n['titulo']}"
+        if n["resumen"]:
+            linea += f" — {n['resumen']}"
+        lineas.append(linea)
+    return f"Ticker: {ticker}\n\nNoticias recientes (ultimos {VENTANA_NOTICIAS_DIAS} dias):\n" + "\n".join(lineas)
+
+
+_SYSTEM_PROMPT_RAG = (
+    "Eres un analista de riesgo que revisa noticias recientes de un activo "
+    "financiero ANTES de que un equipo estudiantil lo compre esta semana en "
+    "una cuenta simulada. Tu unico trabajo es detectar si hay una noticia "
+    "MATERIAL y NEGATIVA reciente (ej. fraude, investigacion regulatoria "
+    "seria, quiebra, escandalo grave, retiro masivo de producto, salida "
+    "abrupta de un ejecutivo clave por causa negativa) que justifique NO "
+    "comprar este activo esta semana.\n\n"
+    "Se conservador: resultados trimestrales mixtos, volatilidad normal de "
+    "precio, opiniones de analistas, o ruido general de mercado NO deben "
+    "bloquear la compra - eso ya lo evalua por separado un modelo "
+    "cuantitativo. Solo vetar ante señales genuinamente graves.\n\n"
+    "Responde EXCLUSIVAMENTE con un JSON valido, sin texto adicional antes "
+    "ni despues, con este formato exacto:\n"
+    '{"aprobado": true o false, "motivo": "explicacion breve en una linea"}'
+)
+
+
+def _consultar_anthropic(prompt_usuario):
+    """Consulta a Claude directo via API de Anthropic (de pago)."""
+    respuesta = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        json={
+            "model": MODELO_LLM_ANTHROPIC,
+            "max_tokens": 200,
+            "system": _SYSTEM_PROMPT_RAG,
+            "messages": [{"role": "user", "content": prompt_usuario}],
+        },
+        timeout=30,
+    )
+    respuesta.raise_for_status()
+    data = respuesta.json()
+    return "".join(
+        bloque.get("text", "") for bloque in data.get("content", [])
+        if bloque.get("type") == "text"
+    )
+
+
+def _consultar_openrouter(prompt_usuario):
+    """Consulta a un modelo gratuito via OpenRouter (endpoint compatible
+    con el formato de OpenAI). Ver OPENROUTER_MODELO arriba - los modelos
+    ':free' pueden rotar; revisar openrouter.ai/models?max_price=0 si este
+    deja de responder."""
+    respuesta = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": OPENROUTER_MODELO,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT_RAG},
+                {"role": "user", "content": prompt_usuario},
+            ],
+            "max_tokens": 200,
+        },
+        timeout=30,
+    )
+    respuesta.raise_for_status()
+    data = respuesta.json()
+    return data["choices"][0]["message"]["content"]
+
+
 def veto_cualitativo_rag(ticker):
-    """STUB - PENDIENTE de integracion real con un sistema RAG (requiere
-    conectar una fuente de noticias/API + un LLM que las lea y decida).
+    """Capa 3 (cualitativa): RETRIEVAL (noticias recientes via yfinance) +
+    GENERATION (un LLM - Claude u OpenRouter gratuito, segun
+    RAG_PROVEEDOR - lee las noticias y decide). Devuelve (aprobado, motivo).
 
-    Interfaz esperada del sistema real: dado un ticker, buscar noticias
-    recientes (ultima semana) y devolver:
-      (aprobado: bool, motivo: str)
-    Si aprobado=False, el candidato se descarta de la compra de esta
-    semana sin importar que tan bien haya rankeado en las capas
-    anteriores.
+    Diseño fail-open deliberado: si falta la API key, no hay noticias, o la
+    llamada al LLM falla por cualquier razon, se aprueba por defecto en vez
+    de bloquear todo el pipeline - un guardrail cualitativo que tumba el
+    sistema entero por una falla tecnica seria peor que no tenerlo. Se
+    imprime siempre un aviso claro cuando esto pasa, para que quede
+    documentado y no sea un fallo silencioso."""
+    if RAG_PROVEEDOR == "openrouter" and not OPENROUTER_API_KEY:
+        return True, "OPENROUTER_API_KEY no configurada - guardrail RAG inactivo (aprobado por defecto)."
+    if RAG_PROVEEDOR == "anthropic" and not ANTHROPIC_API_KEY:
+        return True, "ANTHROPIC_API_KEY no configurada - guardrail RAG inactivo (aprobado por defecto)."
+    if RAG_PROVEEDOR not in ("openrouter", "anthropic"):
+        return True, (f"RAG_PROVEEDOR={RAG_PROVEEDOR!r} no reconocido (usar 'openrouter' "
+                       f"o 'anthropic') - guardrail RAG inactivo (aprobado por defecto).")
 
-    Por ahora SIEMPRE aprueba (no bloquea nada) - es una decision
-    consciente de mantener el guardrail "abierto" hasta implementar el
-    RAG real, no un descuido. Reemplazar este cuerpo cuando el sistema
-    RAG este listo."""
-    return True, "Guardrail cualitativo (RAG) aun no implementado - aprobado por defecto."
+    noticias = obtener_noticias_recientes(ticker)
+    if not noticias:
+        return True, (f"Sin noticias recientes para {ticker} en los ultimos "
+                       f"{VENTANA_NOTICIAS_DIAS} dias - aprobado por defecto.")
+
+    prompt_usuario = construir_prompt_rag(ticker, noticias)
+
+    try:
+        if RAG_PROVEEDOR == "openrouter":
+            texto = _consultar_openrouter(prompt_usuario)
+        else:
+            texto = _consultar_anthropic(prompt_usuario)
+
+        texto = texto.strip().replace("```json", "").replace("```", "").strip()
+        resultado = json.loads(texto)
+        aprobado = bool(resultado.get("aprobado", True))
+        motivo = str(resultado.get("motivo", "Sin motivo especificado por el modelo."))
+        return aprobado, f"[RAG/{RAG_PROVEEDOR}] {motivo}"
+
+    except Exception as e:
+        print(f"  Aviso RAG ({RAG_PROVEEDOR}): fallo la consulta para {ticker} ({e}). "
+              f"Fail-open: se aprueba por defecto.")
+        return True, f"Error en guardrail RAG ({e}) - aprobado por defecto (fail-open)."
 
 
 # ------------------------------------------------------------------
@@ -900,6 +1079,120 @@ def enviar_correo_automatico(asunto, cuerpo):
         return False
 
 
+# ------------------------------------------------------------------
+# NUEVO: INFORME SEMANAL EN MARKDOWN (E7 - Reporting)
+# ------------------------------------------------------------------
+
+def generar_informe_semanal(tabla, resultados, ordenes, estado, bloque_json,
+                             circuit_breaker_activo, ensamble, errores_validacion=None):
+    """Compila la corrida completa (ranking, selecciones, guardrails,
+    capital, JSON final) en un archivo Markdown legible. Se genera en
+    TODA corrida (oficial o de prueba) para dejar rastro documentado del
+    proceso, pero el nombre del archivo deja clarisimo cual es cual -
+    nunca se confunde una prueba con una semana real."""
+    os.makedirs(CARPETA_INFORMES, exist_ok=True)
+
+    fecha_hoy = datetime.today().strftime("%Y-%m-%d")
+    es_oficial = (not MODO_PRUEBA) and ENVIAR_CORREO_REAL
+    etiqueta = "OFICIAL" if es_oficial else "PRUEBA"
+    semana_numero = estado.get("semana_actual", "?")
+    nombre_archivo = f"{CARPETA_INFORMES}/informe_{fecha_hoy}_{etiqueta}.md"
+
+    lineas = []
+    lineas.append(f"# Informe Semanal — AI Trading Challenge (CTA-003)")
+    lineas.append("")
+    lineas.append(f"**Fecha de la corrida:** {fecha_hoy}  ")
+    lineas.append(f"**Semana:** {semana_numero}  ")
+    lineas.append(f"**Tipo de corrida:** {'✅ OFICIAL (correo enviado)' if es_oficial else '🧪 PRUEBA (no se envio nada)'}  ")
+    lineas.append("")
+
+    # --- Estado del ensamble ---------------------------------------------
+    lineas.append("## Estado del modelo (ensamble)")
+    lineas.append("")
+    lineas.append(f"- Fecha de entrenamiento del ensamble usado: **{ensamble.get('fecha_entrenamiento', '?')}**")
+    lineas.append(f"- Numero de modelos en el ensamble: **{len(ensamble.get('modelos_clf', []))}**")
+    hit_rate_hist = estado.get("hit_rate_historico", [])
+    if hit_rate_hist:
+        lineas.append(f"- Hit-rate movil (ultimas {len(hit_rate_hist)} semanas evaluables): "
+                       f"**{np.mean(hit_rate_hist)*100:.1f}%**")
+    lineas.append("")
+
+    # --- Guardrails --------------------------------------------------------
+    lineas.append("## Guardrails")
+    lineas.append("")
+    drawdown_actual = (estado.get("capital_disponible", CAPITAL_TOTAL) /
+                        estado.get("capital_maximo_historico", CAPITAL_TOTAL) - 1) * 100
+    lineas.append(f"- Drawdown actual vs. maximo historico: **{drawdown_actual:.1f}%** "
+                   f"(umbral circuit breaker: {CIRCUIT_BREAKER_DRAWDOWN_PCT}%)")
+    lineas.append(f"- Circuit breaker: {'🔴 **ACTIVO** (todas las compras pausadas)' if circuit_breaker_activo else '🟢 inactivo'}")
+    lineas.append("")
+
+    # --- Ranking completo del universo --------------------------------------
+    lineas.append("## Ranking del universo evaluado esta semana")
+    lineas.append("")
+    cols_tabla = ["ticker", "precio_actual", "prob_supera_mediana", "retorno_esperado_pct",
+                  "var_pct", "cvar_pct", "incertidumbre_ensamble"]
+    cols_presentes = [c for c in cols_tabla if c in tabla.columns]
+    try:
+        lineas.append(tabla[cols_presentes].to_markdown(index=False, floatfmt=".2f"))
+    except ImportError:
+        lineas.append(tabla[cols_presentes].to_string(index=False))
+    lineas.append("")
+
+    # --- Seleccion final -----------------------------------------------------
+    lineas.append("## Seleccion final (BUY de esta semana)")
+    lineas.append("")
+    buys = [r for r in resultados if r.get("decision") == "BUY"]
+    if buys:
+        for r in buys:
+            lineas.append(f"- **{r['ticker']}** — precio ${r['precio_actual']:.2f}, "
+                           f"prob. supera mediana: {r['prob_supera_mediana']:.1f}%, "
+                           f"CVaR: {r['cvar_pct']:.1f}%")
+    else:
+        lineas.append("*Ninguna posicion nueva esta semana.*")
+    lineas.append("")
+
+    # --- Capital y ordenes ejecutadas -----------------------------------------
+    lineas.append("## Capital asignado")
+    lineas.append("")
+    if ordenes:
+        tabla_ordenes = pd.DataFrame(ordenes)[["ticker", "precio_actual", "cantidad", "costo_real"]]
+        try:
+            lineas.append(tabla_ordenes.to_markdown(index=False, floatfmt=".2f"))
+        except ImportError:
+            lineas.append(tabla_ordenes.to_string(index=False))
+        capital_total_usado = sum(o["costo_real"] for o in ordenes)
+        lineas.append("")
+        lineas.append(f"**Capital total usado esta semana:** ${capital_total_usado:.2f}")
+    else:
+        lineas.append("*No se ejecuto ninguna orden esta semana.*")
+    lineas.append("")
+    lineas.append(f"**Capital disponible despues de esta semana:** ${estado.get('capital_disponible', CAPITAL_TOTAL):.2f}")
+    lineas.append("")
+
+    # --- JSON final / validacion ---------------------------------------------
+    lineas.append("## Bloque JSON generado")
+    lineas.append("")
+    if errores_validacion:
+        lineas.append("⚠️ **La validacion local encontro errores - este JSON NO se envio:**")
+        lineas.append("")
+        for e in errores_validacion:
+            lineas.append(f"- {e}")
+    else:
+        lineas.append("✅ Validacion local OK.")
+    lineas.append("")
+    lineas.append("```json")
+    lineas.append(json.dumps(bloque_json, indent=2, ensure_ascii=False))
+    lineas.append("```")
+    lineas.append("")
+
+    with open(nombre_archivo, "w", encoding="utf-8") as f:
+        f.write("\n".join(lineas))
+
+    print(f"\nInforme semanal guardado en {nombre_archivo}")
+    return nombre_archivo
+
+
 def validar_orden(bloque_json):
     errores = []
     if not isinstance(bloque_json, dict):
@@ -1019,6 +1312,12 @@ if __name__ == "__main__":
     bloque_json = generar_bloque_json(ordenes)
     print("\n=== VALIDACION LOCAL ===")
     errores = validar_orden(bloque_json)
+
+    generar_informe_semanal(
+        tabla, resultados, ordenes, estado, bloque_json,
+        circuit_breaker_activo, ensamble, errores_validacion=errores,
+    )
+
     if errores:
         print("EL JSON TIENE ERRORES:")
         for e in errores:
