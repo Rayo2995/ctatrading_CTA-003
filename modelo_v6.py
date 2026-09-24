@@ -227,12 +227,15 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 MODELO_LLM_ANTHROPIC = "claude-haiku-4-5-20251001"
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-# Modelo gratuito de OpenRouter. Aviso importante: los modelos ":free" de
-# OpenRouter rotan de vez en cuando (algunos se retiran, aparecen otros
-# nuevos) - si este deja de funcionar, revisar la lista actual en
-# https://openrouter.ai/models?max_price=0 y cambiar este valor. No hace
-# falta tocar nada mas del codigo.
-OPENROUTER_MODELO = os.environ.get("OPENROUTER_MODELO", "deepseek/deepseek-v4-flash:free")
+# "openrouter/free" es el ROUTER automatico de OpenRouter: elige por su
+# cuenta un modelo gratuito que este funcionando en ese momento (filtra
+# por las capacidades que la peticion necesita). Se prefiere esto sobre
+# apuntar a un modelo especifico (ej. "deepseek/...:free"), porque los
+# modelos gratuitos individuales rotan/desaparecen sin aviso (esto fue
+# justo lo que paso: el modelo especifico que se uso antes dejo de
+# existir y todas las llamadas fallaron con 404). El router absorbe esa
+# rotacion automaticamente.
+OPENROUTER_MODELO = os.environ.get("OPENROUTER_MODELO", "openrouter/free")
 VENTANA_NOTICIAS_DIAS = 7
 MAX_NOTICIAS_POR_TICKER = 8
 
@@ -1309,6 +1312,29 @@ if __name__ == "__main__":
         print(f"\nEstado guardado. Capital para la proxima semana: "
               f"${estado['capital_disponible']:.2f}")
 
+    tabla.to_csv("backlog_decisiones_v6.csv", index=False)
+    print("\nTabla guardada en backlog_decisiones_v6.csv")
+
+    # --- NUEVO: separar "0 ordenes a proposito" de "JSON invalido de
+    # verdad". Lo primero (circuit breaker activo, o ningun candidato
+    # paso los filtros esta semana) es el sistema funcionando CORRECTO,
+    # no un error - no debe marcar el workflow como fallido (rojo) en
+    # GitHub Actions, o se vuelve indistinguible de un bug real cuando
+    # revisen el historial de corridas mas adelante.
+    if not ordenes:
+        print("\n=== SIN ORDENES ESTA SEMANA ===")
+        motivo = ("circuit breaker activo" if circuit_breaker_activo
+                   else "ningun candidato paso los filtros de seleccion esta semana")
+        print(f"  No hay ordenes que enviar ({motivo}). No se genera JSON ni se "
+              f"envia correo. Esto es un resultado VALIDO del sistema, no un error.")
+        bloque_json = {"version": 1, "orders": []}
+        generar_informe_semanal(
+            tabla, resultados, ordenes, estado, bloque_json,
+            circuit_breaker_activo, ensamble, errores_validacion=None,
+        )
+        print("\nCorrida finalizada sin ordenes esta semana (salida normal).")
+        raise SystemExit(0)  # exit code 0: no es un fallo, GitHub Actions lo marca en verde
+
     bloque_json = generar_bloque_json(ordenes)
     print("\n=== VALIDACION LOCAL ===")
     errores = validar_orden(bloque_json)
@@ -1319,6 +1345,9 @@ if __name__ == "__main__":
     )
 
     if errores:
+        # Aqui SI hay ordenes pero el JSON quedo mal formado - esto es un
+        # bug real (no una pausa intencional) y debe fallar el workflow
+        # en rojo para que el equipo lo note y lo revise.
         print("EL JSON TIENE ERRORES:")
         for e in errores:
             print("  -", e)
@@ -1328,20 +1357,15 @@ if __name__ == "__main__":
     print("\n=== BLOQUE JSON PARA EL CORREO SEMANAL ===")
     print(json.dumps(bloque_json, indent=2, ensure_ascii=False))
 
-    tabla.to_csv("backlog_decisiones_v6.csv", index=False)
-    print("\nTabla guardada en backlog_decisiones_v6.csv")
-
     # --- Envio automatico (SOLO si pasaron todos los seguros) -----------
+    # Nota: llegar hasta aqui garantiza que 'ordenes' NO esta vacio - el
+    # caso de 0 ordenes ya se maneja (y termina la corrida) mas arriba.
     print("\n=== ENVIO DE CORREO ===")
     if MODO_PRUEBA:
         print("  MODO_PRUEBA activo: no se intenta enviar correo.")
     elif not ENVIAR_CORREO_REAL:
         print("  ENVIAR_CORREO_REAL no esta en 'true': no se intenta enviar correo "
               "(esto es normal en una corrida manual de prueba).")
-    elif len(ordenes) == 0:
-        print("  No hay ordenes esta semana (0 posiciones seleccionadas o circuit "
-              "breaker activo): no se envia correo. Revisar manualmente si esto es "
-              "lo esperado.")
     else:
         asunto = armar_asunto(estado["semana_actual"])
         cuerpo = armar_cuerpo(bloque_json)
