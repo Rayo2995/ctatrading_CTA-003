@@ -43,6 +43,9 @@ jobs:
         env:
           EMAIL_REMITENTE: ${{ secrets.EMAIL_REMITENTE }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Opcional: solo si algun dia cambian RAG_PROVEEDOR a "anthropic"
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # La corrida programada (cron, viernes 8am) SIEMPRE es la
           # oficial: MODO_PRUEBA=false y ENVIAR_CORREO_REAL=true.
           # Una corrida manual (workflow_dispatch) respeta lo que el
@@ -62,7 +65,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add estado_portafolio.json ensamble_v6.joblib backlog_decisiones_v6.csv 2>/dev/null || true
+          git add estado_portafolio.json ensamble_v6.joblib backlog_decisiones_v6.csv informes/ 2>/dev/null || true
           if ! git diff --cached --quiet; then
             git commit -m "Actualiza estado semanal (corrida automatica $(date -u +%Y-%m-%d))"
             git push
