@@ -1,6 +1,6 @@
 {
   "capital_disponible": 7140.68,
-  "semana_actual": 2,
+  "semana_actual": 3,
   "historial": [
     {
       "semana": 1,
@@ -34,9 +34,21 @@
       "fecha": "2026-09-24",
       "ordenes": [],
       "evaluado_hit_rate": false
+    },
+    {
+      "semana": 3,
+      "fecha": "2026-09-25",
+      "ordenes": [],
+      "evaluado_hit_rate": false
     }
   ],
-  "capital_maximo_historico": 10000.0,
+  "capital_maximo_historico": 1151339.250022583,
   "circuit_breaker_activo": true,
-  "hit_rate_historico": []
+  "hit_rate_historico": [],
+  "posiciones": {
+    "NVDA": 4,
+    "005930.KS": 4,
+    "TSM": 1,
+    "NEM": 7
+  }
 }
