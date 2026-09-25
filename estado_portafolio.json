@@ -1,6 +1,6 @@
 {
   "capital_disponible": 7140.68,
-  "semana_actual": 3,
+  "semana_actual": 4,
   "historial": [
     {
       "semana": 1,
@@ -37,6 +37,12 @@
     },
     {
       "semana": 3,
+      "fecha": "2026-09-25",
+      "ordenes": [],
+      "evaluado_hit_rate": false
+    },
+    {
+      "semana": 4,
       "fecha": "2026-09-25",
       "ordenes": [],
       "evaluado_hit_rate": false
