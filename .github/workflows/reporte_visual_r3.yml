@@ -1,0 +1,56 @@
+name: AI Trading Challenge - Reporte Visual R3 (CTA-003)
+
+on:
+  # Se dispara automaticamente cuando termina la corrida semanal
+  # (exitosa o no - por eso el chequeo del "if" en el job).
+  workflow_run:
+    workflows: ["AI Trading Challenge - Corrida semanal (CTA-003)"]
+    types:
+      - completed
+
+  # Tambien se puede correr manualmente en cualquier momento (ej. para
+  # generar el reporte de sprint sin esperar al viernes).
+  workflow_dispatch:
+
+jobs:
+  generar-reporte-visual:
+    runs-on: ubuntu-latest
+    # Si vino de workflow_run, solo corre si la corrida semanal termino
+    # bien (aunque el correo haya fallado, el estado probablemente se
+    # actualizo). Si vino de workflow_dispatch, siempre corre.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Descargar el repo
+        uses: actions/checkout@v4
+        with:
+          ref: main  # asegura tomar el estado ya actualizado por la otra corrida
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Generar reporte visual R3
+        continue-on-error: true  # si falla, no bloquea nada mas
+        run: python reporte_visual_r3.py
+
+      - name: Guardar el reporte generado
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase
+          git add reportes/ 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "Actualiza reporte visual R3 ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "Sin cambios de reporte que subir."
+          fi
