@@ -1,7 +1,7 @@
 # Informe Semanal — AI Trading Challenge (CTA-003)
 
 **Fecha de la corrida:** 2026-09-25  
-**Semana:** 4  
+**Semana:** 5  
 **Resultado de esta corrida:** ⚪ Sin ordenes esta semana (0 candidatos seleccionados) - no se genero ni envio JSON.  
 
 ## Estado del modelo (ensamble)
@@ -57,11 +57,11 @@
 ## Guardrail cualitativo (RAG) — noticias revisadas
 
 - **005930.KS**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
-- **000660.KS**: [RAG/openrouter] No se encontraron noticias materiales y negativas recientes (ej. fraude, investigación regulatoria grave, escándalo, etc.) que justifiquen vetar la compra.
+- **000660.KS**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
 - **TSM**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
 - **TRGP**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
-- **GDX**: Error en guardrail RAG (Expecting value: line 1 column 13 (char 12)) - aprobado por defecto (fail-open).
-- **NEM**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
+- **GDX**: [RAG/openrouter] No hay noticias de eventos negativos materiales; solo comentarios de mercado y análisis comparativo.
+- **NEM**: [RAG/openrouter] No hay noticias materialmente negativas; solo fluctuaciones normales y análisis positivos.
 
 ## Seleccion final (BUY de esta semana)
 
