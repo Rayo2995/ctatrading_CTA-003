@@ -735,17 +735,33 @@ def veto_cualitativo_rag(ticker):
 # NUEVO v6 - PUNTO 5: CIRCUIT BREAKER Y MONITOR DE HIT-RATE
 # ------------------------------------------------------------------
 
-def verificar_circuit_breaker(estado):
-    """Compara el capital actual contra el maximo historico registrado.
-    Si el drawdown supera CIRCUIT_BREAKER_DRAWDOWN_PCT, se pausan todas
-    las compras nuevas hasta que el equipo lo revise y resetee
-    manualmente 'circuit_breaker_activo' en el estado."""
-    capital_actual = estado.get("capital_disponible", CAPITAL_TOTAL)
+def verificar_circuit_breaker(estado, precios_actuales_por_ticker):
+    """Compara el PATRIMONIO TOTAL actual (efectivo + valor de mercado
+    de las posiciones abiertas) contra el maximo historico registrado.
+
+    FIX importante: la version anterior comparaba solo el EFECTIVO
+    disponible, sin sumar el valor de las posiciones ya compradas. Eso
+    hacia que el circuit breaker se disparara solo por el hecho de
+    COMPRAR (el efectivo baja al comprar, sin que eso sea una perdida -
+    el dinero se convierte en acciones, sigue siendo del equipo). Ahora
+    se usa el patrimonio total real: efectivo + suma(cantidad * precio
+    actual) de cada posicion abierta."""
+    posiciones = estado.get("posiciones", {})
+    valor_posiciones = sum(
+        cantidad * precios_actuales_por_ticker.get(ticker, 0)
+        for ticker, cantidad in posiciones.items()
+    )
+    capital_actual = estado.get("capital_disponible", CAPITAL_TOTAL) + valor_posiciones
+
     capital_maximo_historico = estado.get("capital_maximo_historico", CAPITAL_TOTAL)
     capital_maximo_historico = max(capital_maximo_historico, capital_actual)
     estado["capital_maximo_historico"] = capital_maximo_historico
 
     drawdown_pct = (capital_actual / capital_maximo_historico - 1) * 100
+
+    print(f"  Patrimonio total actual: ${capital_actual:.2f} (efectivo: "
+          f"${estado.get('capital_disponible', CAPITAL_TOTAL):.2f} + posiciones: "
+          f"${valor_posiciones:.2f})")
 
     if estado.get("circuit_breaker_activo", False):
         print(f"  CIRCUIT BREAKER SIGUE ACTIVO (activado manualmente en una corrida "
@@ -884,13 +900,12 @@ def evaluar_activo_v6(ticker, precios, feats, ensamble, tasas_cambio=None):
 
 def seleccionar_candidatos(resultados):
     """Capa 1 (ranking) + Capa 2 (veto de riesgo RELATIVO) + Capa 3 (veto
-    RAG, stub). Devuelve la lista de tickers seleccionados como BUY esta
-    semana, y un log de por que cada uno entro o fue descartado."""
+    RAG real). Devuelve la lista completa de resultados, cada uno con
+    'decision', 'estado_seleccion' y 'motivo_seleccion' anotados (esto
+    ultimo incluye el veredicto del RAG cuando aplico, para poder
+    mostrarlo en el informe semanal)."""
     candidatos = sorted(resultados, key=lambda r: r["prob_supera_mediana"], reverse=True)
 
-    # Veto de riesgo RELATIVO: se calcula el percentil de corte de CVaR
-    # entre los candidatos de ESTA semana (nunca un numero absoluto fijo -
-    # ver nota en CVAR_VETO_PERCENTIL sobre por que se cambio de diseño).
     cvars = np.array([r["cvar_pct"] for r in candidatos])
     if len(cvars) > 0:
         corte_cvar = np.percentile(cvars, CVAR_VETO_PERCENTIL)
@@ -902,31 +917,39 @@ def seleccionar_candidatos(resultados):
 
     for r in candidatos:
         if len(seleccionados) >= N_POSICIONES_SEMANA:
-            log_decisiones.append((r["ticker"], "DESCARTADO", "cupo semanal ya lleno"))
+            r["estado_seleccion"] = "DESCARTADO"
+            r["motivo_seleccion"] = "cupo semanal ya lleno"
+            log_decisiones.append((r["ticker"], r["estado_seleccion"], r["motivo_seleccion"]))
             continue
 
         if r["retorno_esperado_pct"] < UMBRAL_RETORNO_MIN_ABSOLUTO:
-            log_decisiones.append((r["ticker"], "DESCARTADO",
-                                    f"retorno absoluto ({r['retorno_esperado_pct']:.1f}%) "
-                                    f"por debajo del piso de seguridad"))
+            r["estado_seleccion"] = "DESCARTADO"
+            r["motivo_seleccion"] = (f"retorno absoluto ({r['retorno_esperado_pct']:.1f}%) "
+                                      f"por debajo del piso de seguridad")
+            log_decisiones.append((r["ticker"], r["estado_seleccion"], r["motivo_seleccion"]))
             continue
 
         if r["cvar_pct"] < corte_cvar:
-            log_decisiones.append((r["ticker"], "DESCARTADO (capa riesgo)",
-                                    f"CVaR ({r['cvar_pct']:.1f}%) esta en el peor "
-                                    f"{CVAR_VETO_PERCENTIL}% relativo de esta semana "
-                                    f"(corte: {corte_cvar:.1f}%)"))
+            r["estado_seleccion"] = "DESCARTADO (capa riesgo)"
+            r["motivo_seleccion"] = (f"CVaR ({r['cvar_pct']:.1f}%) esta en el peor "
+                                      f"{CVAR_VETO_PERCENTIL}% relativo de esta semana "
+                                      f"(corte: {corte_cvar:.1f}%)")
+            log_decisiones.append((r["ticker"], r["estado_seleccion"], r["motivo_seleccion"]))
             continue
 
         aprobado_rag, motivo_rag = veto_cualitativo_rag(r["ticker"])
+        r["motivo_rag"] = motivo_rag  # se guarda SIEMPRE (aprobado o no) para el informe
         if not aprobado_rag:
-            log_decisiones.append((r["ticker"], "DESCARTADO (capa cualitativa)", motivo_rag))
+            r["estado_seleccion"] = "DESCARTADO (capa cualitativa)"
+            r["motivo_seleccion"] = motivo_rag
+            log_decisiones.append((r["ticker"], r["estado_seleccion"], r["motivo_seleccion"]))
             continue
 
         r["decision"] = "BUY"
+        r["estado_seleccion"] = "BUY"
+        r["motivo_seleccion"] = f"rank #{len(seleccionados) + 1}, prob={r['prob_supera_mediana']:.1f}%"
         seleccionados.append(r)
-        log_decisiones.append((r["ticker"], "BUY", f"rank #{len(seleccionados)}, "
-                                f"prob={r['prob_supera_mediana']:.1f}%"))
+        log_decisiones.append((r["ticker"], r["estado_seleccion"], r["motivo_seleccion"]))
 
     for r in resultados:
         if r not in seleccionados:
@@ -945,13 +968,34 @@ def seleccionar_candidatos(resultados):
 # ASIGNACION DE CAPITAL / JSON / VALIDADOR (heredado de v4/v5)
 # ------------------------------------------------------------------
 
+def reconstruir_posiciones_desde_historial(historial):
+    """Migracion: si el estado guardado es de una version anterior sin
+    'posiciones', se reconstruye sumando las cantidades compradas en
+    cada semana del historial. Necesario para que el FIX del circuit
+    breaker (equity real = efectivo + valor de posiciones, no solo
+    efectivo) funcione correctamente con estados ya existentes."""
+    posiciones = {}
+    for entrada in historial:
+        for o in entrada.get("ordenes", []):
+            posiciones[o["ticker"]] = posiciones.get(o["ticker"], 0) + o.get("cantidad", 0)
+    return posiciones
+
+
 def cargar_estado():
     if os.path.exists(ARCHIVO_ESTADO):
         with open(ARCHIVO_ESTADO, "r", encoding="utf-8") as f:
-            return json.load(f)
+            estado = json.load(f)
+        if "posiciones" not in estado:
+            estado["posiciones"] = reconstruir_posiciones_desde_historial(estado.get("historial", []))
+            print("  Migracion de estado: 'posiciones' reconstruido desde el historial "
+                  "(version anterior sin este campo).")
+        estado.setdefault("capital_maximo_historico", CAPITAL_TOTAL)
+        estado.setdefault("circuit_breaker_activo", False)
+        estado.setdefault("hit_rate_historico", [])
+        return estado
     return {"capital_disponible": CAPITAL_TOTAL, "semana_actual": 0, "historial": [],
             "capital_maximo_historico": CAPITAL_TOTAL, "circuit_breaker_activo": False,
-            "hit_rate_historico": []}
+            "hit_rate_historico": [], "posiciones": {}}
 
 
 def guardar_estado(estado):
@@ -1087,26 +1131,49 @@ def enviar_correo_automatico(asunto, cuerpo):
 # ------------------------------------------------------------------
 
 def generar_informe_semanal(tabla, resultados, ordenes, estado, bloque_json,
-                             circuit_breaker_activo, ensamble, errores_validacion=None):
+                             circuit_breaker_activo, ensamble, resultado_envio,
+                             errores_validacion=None):
     """Compila la corrida completa (ranking, selecciones, guardrails,
     capital, JSON final) en un archivo Markdown legible. Se genera en
     TODA corrida (oficial o de prueba) para dejar rastro documentado del
     proceso, pero el nombre del archivo deja clarisimo cual es cual -
-    nunca se confunde una prueba con una semana real."""
+    nunca se confunde una prueba con una semana real.
+
+    `resultado_envio` describe el DESENLACE REAL de esta corrida (nunca
+    se adivina a partir de banderas de configuracion como MODO_PRUEBA,
+    porque esas banderas describen la intencion, no lo que realmente
+    paso). Valores esperados:
+      "enviado"          - el correo se envio de verdad esta semana.
+      "fallo_envio"       - se intento enviar pero fallo (SMTP, etc).
+      "error_validacion"  - el JSON no paso la validacion, nunca se intento enviar.
+      "sin_ordenes"       - 0 ordenes esta semana (circuit breaker o sin
+                             candidatos) - no se genero JSON para enviar.
+      "prueba"            - corrida de prueba (MODO_PRUEBA o
+                             ENVIAR_CORREO_REAL=false) - todo OK pero
+                             deliberadamente no se envio nada.
+    """
     os.makedirs(CARPETA_INFORMES, exist_ok=True)
 
     fecha_hoy = datetime.today().strftime("%Y-%m-%d")
-    es_oficial = (not MODO_PRUEBA) and ENVIAR_CORREO_REAL
-    etiqueta = "OFICIAL" if es_oficial else "PRUEBA"
+    etiqueta = "OFICIAL" if resultado_envio == "enviado" else "PRUEBA"
     semana_numero = estado.get("semana_actual", "?")
     nombre_archivo = f"{CARPETA_INFORMES}/informe_{fecha_hoy}_{etiqueta}.md"
+
+    _TEXTOS_RESULTADO = {
+        "enviado": "✅ Correo enviado al profesor esta semana.",
+        "fallo_envio": "🔴 Se intento enviar el correo pero FALLO (revisar log de la corrida).",
+        "error_validacion": "🔴 El JSON generado tiene errores de formato - NO se envio nada.",
+        "sin_ordenes": "⚪ Sin ordenes esta semana (0 candidatos seleccionados) - no se genero ni envio JSON.",
+        "prueba": "🧪 Corrida de prueba - JSON valido, pero no se envio nada (por diseño).",
+    }
+    texto_resultado = _TEXTOS_RESULTADO.get(resultado_envio, f"⚠️ Estado desconocido: {resultado_envio}")
 
     lineas = []
     lineas.append(f"# Informe Semanal — AI Trading Challenge (CTA-003)")
     lineas.append("")
     lineas.append(f"**Fecha de la corrida:** {fecha_hoy}  ")
     lineas.append(f"**Semana:** {semana_numero}  ")
-    lineas.append(f"**Tipo de corrida:** {'✅ OFICIAL (correo enviado)' if es_oficial else '🧪 PRUEBA (no se envio nada)'}  ")
+    lineas.append(f"**Resultado de esta corrida:** {texto_resultado}  ")
     lineas.append("")
 
     # --- Estado del ensamble ---------------------------------------------
@@ -1142,6 +1209,26 @@ def generar_informe_semanal(tabla, resultados, ordenes, estado, bloque_json,
         lineas.append(tabla[cols_presentes].to_string(index=False))
     lineas.append("")
 
+    # --- NUEVO: log completo de seleccion (por que cada ticker entro o no) ---
+    lineas.append("## Log de seleccion (ranking + capa de riesgo + capa cualitativa)")
+    lineas.append("")
+    resultados_ordenados = sorted(resultados, key=lambda r: r.get("prob_supera_mediana", 0), reverse=True)
+    for r in resultados_ordenados:
+        estado_sel = r.get("estado_seleccion", "?")
+        motivo_sel = r.get("motivo_seleccion", "")
+        emoji = "✅" if estado_sel == "BUY" else "⛔"
+        lineas.append(f"- {emoji} **{r['ticker']}** — {estado_sel}: {motivo_sel}")
+    lineas.append("")
+
+    # --- NUEVO: veredictos del guardrail cualitativo (RAG) --------------------
+    con_rag = [r for r in resultados if r.get("motivo_rag")]
+    if con_rag:
+        lineas.append("## Guardrail cualitativo (RAG) — noticias revisadas")
+        lineas.append("")
+        for r in con_rag:
+            lineas.append(f"- **{r['ticker']}**: {r['motivo_rag']}")
+        lineas.append("")
+
     # --- Seleccion final -----------------------------------------------------
     lineas.append("## Seleccion final (BUY de esta semana)")
     lineas.append("")
@@ -1176,17 +1263,23 @@ def generar_informe_semanal(tabla, resultados, ordenes, estado, bloque_json,
     # --- JSON final / validacion ---------------------------------------------
     lineas.append("## Bloque JSON generado")
     lineas.append("")
-    if errores_validacion:
+    if resultado_envio == "sin_ordenes":
+        lineas.append("*No se genero bloque JSON esta semana (0 ordenes).*")
+    elif errores_validacion:
         lineas.append("⚠️ **La validacion local encontro errores - este JSON NO se envio:**")
         lineas.append("")
         for e in errores_validacion:
             lineas.append(f"- {e}")
+        lineas.append("")
+        lineas.append("```json")
+        lineas.append(json.dumps(bloque_json, indent=2, ensure_ascii=False))
+        lineas.append("```")
     else:
         lineas.append("✅ Validacion local OK.")
-    lineas.append("")
-    lineas.append("```json")
-    lineas.append(json.dumps(bloque_json, indent=2, ensure_ascii=False))
-    lineas.append("```")
+        lineas.append("")
+        lineas.append("```json")
+        lineas.append(json.dumps(bloque_json, indent=2, ensure_ascii=False))
+        lineas.append("```")
     lineas.append("")
 
     with open(nombre_archivo, "w", encoding="utf-8") as f:
@@ -1271,9 +1364,12 @@ if __name__ == "__main__":
 
     estado = cargar_estado()
 
-    print("\n=== GUARDRAILS ===")
-    circuit_breaker_activo, estado = verificar_circuit_breaker(estado)
+    # Precios actuales de TODO el universo, necesarios para valorar
+    # posiciones abiertas (circuit breaker) y para el monitor de hit-rate.
     precios_actuales_por_ticker = {t: float(s.iloc[-1]) for t, s in series_por_ticker.items()}
+
+    print("\n=== GUARDRAILS ===")
+    circuit_breaker_activo, estado = verificar_circuit_breaker(estado, precios_actuales_por_ticker)
     estado = actualizar_monitor_hit_rate(estado, precios_actuales_por_ticker)
 
     if circuit_breaker_activo:
@@ -1297,6 +1393,14 @@ if __name__ == "__main__":
 
     estado["capital_disponible"] -= capital_usado
     estado["semana_actual"] = semana_actual + 1
+
+    # NUEVO: acumular las posiciones compradas esta semana - esto es lo
+    # que permite que el circuit breaker de la PROXIMA corrida calcule
+    # el patrimonio total correctamente (ver fix en verificar_circuit_breaker).
+    posiciones = estado.setdefault("posiciones", {})
+    for o in ordenes:
+        posiciones[o["ticker"]] = posiciones.get(o["ticker"], 0) + o["cantidad"]
+
     estado["historial"].append({
         "semana": semana_actual + 1,
         "fecha": FECHA_FIN,
@@ -1315,64 +1419,61 @@ if __name__ == "__main__":
     tabla.to_csv("backlog_decisiones_v6.csv", index=False)
     print("\nTabla guardada en backlog_decisiones_v6.csv")
 
-    # --- NUEVO: separar "0 ordenes a proposito" de "JSON invalido de
-    # verdad". Lo primero (circuit breaker activo, o ningun candidato
-    # paso los filtros esta semana) es el sistema funcionando CORRECTO,
-    # no un error - no debe marcar el workflow como fallido (rojo) en
-    # GitHub Actions, o se vuelve indistinguible de un bug real cuando
-    # revisen el historial de corridas mas adelante.
+    # --- Desde aqui, se determina el DESENLACE REAL de la corrida
+    # (resultado_envio), y se genera el informe UNA sola vez al final,
+    # ya con el resultado definitivo - nunca antes de saberlo.
+    bloque_json = {"version": 1, "orders": []}
+    errores = None
+    resultado_envio = "sin_ordenes"
+
     if not ordenes:
         print("\n=== SIN ORDENES ESTA SEMANA ===")
         motivo = ("circuit breaker activo" if circuit_breaker_activo
                    else "ningun candidato paso los filtros de seleccion esta semana")
         print(f"  No hay ordenes que enviar ({motivo}). No se genera JSON ni se "
               f"envia correo. Esto es un resultado VALIDO del sistema, no un error.")
-        bloque_json = {"version": 1, "orders": []}
-        generar_informe_semanal(
-            tabla, resultados, ordenes, estado, bloque_json,
-            circuit_breaker_activo, ensamble, errores_validacion=None,
-        )
-        print("\nCorrida finalizada sin ordenes esta semana (salida normal).")
-        raise SystemExit(0)  # exit code 0: no es un fallo, GitHub Actions lo marca en verde
+    else:
+        bloque_json = generar_bloque_json(ordenes)
+        print("\n=== VALIDACION LOCAL ===")
+        errores = validar_orden(bloque_json)
 
-    bloque_json = generar_bloque_json(ordenes)
-    print("\n=== VALIDACION LOCAL ===")
-    errores = validar_orden(bloque_json)
+        if errores:
+            resultado_envio = "error_validacion"
+            print("EL JSON TIENE ERRORES:")
+            for e in errores:
+                print("  -", e)
+        else:
+            print("Validacion OK.")
+            print("\n=== BLOQUE JSON PARA EL CORREO SEMANAL ===")
+            print(json.dumps(bloque_json, indent=2, ensure_ascii=False))
+
+            print("\n=== ENVIO DE CORREO ===")
+            if MODO_PRUEBA:
+                print("  MODO_PRUEBA activo: no se intenta enviar correo.")
+                resultado_envio = "prueba"
+            elif not ENVIAR_CORREO_REAL:
+                print("  ENVIAR_CORREO_REAL no esta en 'true': no se intenta enviar "
+                      "correo (esto es normal en una corrida manual de prueba).")
+                resultado_envio = "prueba"
+            else:
+                asunto = armar_asunto(estado["semana_actual"])
+                cuerpo = armar_cuerpo(bloque_json)
+                print(f"  Asunto: {asunto}")
+                enviado = enviar_correo_automatico(asunto, cuerpo)
+                resultado_envio = "enviado" if enviado else "fallo_envio"
 
     generar_informe_semanal(
         tabla, resultados, ordenes, estado, bloque_json,
-        circuit_breaker_activo, ensamble, errores_validacion=errores,
+        circuit_breaker_activo, ensamble, resultado_envio,
+        errores_validacion=errores,
     )
 
-    if errores:
-        # Aqui SI hay ordenes pero el JSON quedo mal formado - esto es un
-        # bug real (no una pausa intencional) y debe fallar el workflow
-        # en rojo para que el equipo lo note y lo revise.
-        print("EL JSON TIENE ERRORES:")
-        for e in errores:
-            print("  -", e)
+    # Codigo de salida: solo los casos que representan un problema REAL
+    # (JSON invalido con ordenes, o fallo tecnico al enviar) marcan el
+    # workflow como fallido (rojo). "sin_ordenes" y "prueba" terminan
+    # en codigo 0 (verde) - son resultados normales, no errores.
+    if resultado_envio == "error_validacion":
         raise SystemExit("Corrige los errores antes de enviar.")
-    print("Validacion OK.")
-
-    print("\n=== BLOQUE JSON PARA EL CORREO SEMANAL ===")
-    print(json.dumps(bloque_json, indent=2, ensure_ascii=False))
-
-    # --- Envio automatico (SOLO si pasaron todos los seguros) -----------
-    # Nota: llegar hasta aqui garantiza que 'ordenes' NO esta vacio - el
-    # caso de 0 ordenes ya se maneja (y termina la corrida) mas arriba.
-    print("\n=== ENVIO DE CORREO ===")
-    if MODO_PRUEBA:
-        print("  MODO_PRUEBA activo: no se intenta enviar correo.")
-    elif not ENVIAR_CORREO_REAL:
-        print("  ENVIAR_CORREO_REAL no esta en 'true': no se intenta enviar correo "
-              "(esto es normal en una corrida manual de prueba).")
-    else:
-        asunto = armar_asunto(estado["semana_actual"])
-        cuerpo = armar_cuerpo(bloque_json)
-        print(f"  Asunto: {asunto}")
-        enviado = enviar_correo_automatico(asunto, cuerpo)
-        if not enviado:
-            raise SystemExit(
-                "El envio automatico de correo fallo. Revisar el log de arriba "
-                "(credenciales, conexion) y reintentar."
-            )
+    if resultado_envio == "fallo_envio":
+        raise SystemExit("El envio automatico de correo fallo. Revisar el log "
+                          "(credenciales, conexion) y reintentar.")
