@@ -46,10 +46,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase
+
           git add reportes/ 2>/dev/null || true
+
           if ! git diff --cached --quiet; then
             git commit -m "Actualiza reporte visual R3 ($(date -u +%Y-%m-%d))"
+            git pull --rebase
             git push
           else
             echo "Sin cambios de reporte que subir."
