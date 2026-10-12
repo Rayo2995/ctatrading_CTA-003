@@ -312,6 +312,53 @@ def obtener_tasas_cambio(tickers):
     return tasas
 
 
+def convertir_precio_a_usd(ticker, precio_local, tasas_cambio):
+    """Convierte un precio en moneda local a USD usando las tasas de
+    obtener_tasas_cambio(). Devuelve None si el ticker no es USD y no hay
+    tasa disponible (para que quien llama decida que hacer, en vez de
+    usar el precio crudo en la moneda equivocada).
+
+    FIX (bug KRW): antes, la valoracion del portafolio (circuit breaker,
+    monitor de hit-rate) usaba el precio crudo en wones de 005930.KS y
+    000660.KS como si fueran dolares, inflando el patrimonio ~1000x."""
+    moneda = MONEDA_TICKER.get(ticker, "USD")
+    if moneda == "USD":
+        return float(precio_local)
+    tasa = (tasas_cambio or {}).get(moneda)
+    if not tasa:
+        return None
+    return float(precio_local) / tasa
+
+
+def construir_precios_actuales_usd(series_por_ticker, tasas_cambio, estado):
+    """Precio actual de cada ticker EN USD, para valorar posiciones.
+    Si falta la tasa de cambio de un ticker no-USD, usa como respaldo el
+    ultimo precio de compra de referencia (ya en USD) guardado en el
+    historial, con una advertencia - mejor eso que valorarlo en 0 (lo
+    que dispararia un drawdown falso) o en la moneda equivocada."""
+    precios = {}
+    for ticker, serie in series_por_ticker.items():
+        precio_usd = convertir_precio_a_usd(ticker, serie.iloc[-1], tasas_cambio)
+        if precio_usd is None:
+            respaldo = None
+            for entrada in reversed(estado.get("historial", [])):
+                for orden in entrada.get("ordenes", []):
+                    if orden.get("ticker") == ticker and orden.get("precio_compra_referencia"):
+                        respaldo = float(orden["precio_compra_referencia"])
+                        break
+                if respaldo is not None:
+                    break
+            if respaldo is None:
+                print(f"  ADVERTENCIA: sin tipo de cambio para {ticker}; "
+                      f"se excluye de la valoracion del portafolio.")
+                continue
+            print(f"  ADVERTENCIA: sin tipo de cambio para {ticker}; se valora "
+                  f"con su ultimo precio de compra (USD {respaldo:.2f}).")
+            precio_usd = respaldo
+        precios[ticker] = precio_usd
+    return precios
+
+
 def revisar_calidad_datos(ticker, datos):
     fechas = pd.Series(datos.index)
     diffs_dias = fechas.diff().dt.days.dropna()
@@ -1366,7 +1413,12 @@ if __name__ == "__main__":
 
     # Precios actuales de TODO el universo, necesarios para valorar
     # posiciones abiertas (circuit breaker) y para el monitor de hit-rate.
-    precios_actuales_por_ticker = {t: float(s.iloc[-1]) for t, s in series_por_ticker.items()}
+    # FIX: convertidos a USD (antes: precio crudo, en wones para los
+    # tickers coreanos, lo que inflaba el patrimonio y disparaba el
+    # circuit breaker de forma falsa).
+    precios_actuales_por_ticker = construir_precios_actuales_usd(
+        series_por_ticker, tasas_cambio, estado
+    )
 
     print("\n=== GUARDRAILS ===")
     circuit_breaker_activo, estado = verificar_circuit_breaker(estado, precios_actuales_por_ticker)

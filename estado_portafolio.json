@@ -66,8 +66,8 @@
       "evaluado_hit_rate": false
     }
   ],
-  "capital_maximo_historico": 1151339.250022583,
-  "circuit_breaker_activo": true,
+  "capital_maximo_historico": 10199.86,
+  "circuit_breaker_activo": false,
   "hit_rate_historico": [],
   "posiciones": {
     "NVDA": 4,

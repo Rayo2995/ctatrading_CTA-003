@@ -42,6 +42,13 @@ ARCHIVO_ESTADO = "estado_portafolio.json"
 CAPITAL_TOTAL = 10000.0
 CARPETA_REPORTES = "reportes"
 
+# Monedas de los tickers no-USD (debe coincidir con modelo_v6.py).
+# FIX (bug KRW): los precios de 005930.KS y 000660.KS vienen en wones;
+# hay que convertirlos a USD antes de valorar posiciones, porque el costo
+# de compra guardado en el estado ya esta en USD.
+MONEDA_TICKER = {"005930.KS": "KRW", "000660.KS": "KRW"}
+PAR_FX_A_USD = {"KRW": "KRW=X"}
+
 
 def cargar_estado(archivo=ARCHIVO_ESTADO):
     if not os.path.exists(archivo):
@@ -72,6 +79,27 @@ def descargar_con_reintentos(ticker, intentos=3, espera_segundos=5, **kwargs):
             time.sleep(espera_segundos)
     raise ValueError(f"No se pudo descargar {ticker} tras {intentos} intentos "
                       f"(ultimo error: {ultimo_error}).")
+
+
+def convertir_serie_a_usd(ticker, serie, inicio, fin):
+    """Convierte una serie de precios en moneda local a USD, dia a dia,
+    usando el tipo de cambio historico (se rellena hacia adelante en dias
+    sin cotizacion FX, p. ej. feriados). Devuelve la serie sin cambios si
+    el ticker ya esta en USD. Lanza ValueError si no hay tipo de cambio:
+    es preferible excluir el ticker con aviso que valorarlo en la moneda
+    equivocada."""
+    moneda = MONEDA_TICKER.get(ticker, "USD")
+    if moneda == "USD":
+        return serie
+    par = PAR_FX_A_USD.get(moneda)
+    if par is None:
+        raise ValueError(f"No hay par FX configurado para {moneda}.")
+    fx = descargar_con_reintentos(par, start=inicio, end=fin, auto_adjust=True)["Close"]
+    if isinstance(fx, pd.DataFrame):
+        fx = fx.iloc[:, 0]
+    fx = fx.dropna()
+    fx_alineado = fx.reindex(serie.index.union(fx.index)).ffill().bfill().reindex(serie.index)
+    return serie / fx_alineado
 
 
 # ------------------------------------------------------------------
@@ -130,6 +158,11 @@ def construir_equity_curve(tabla_ops):
             )["Close"]
             if isinstance(datos, pd.DataFrame):
                 datos = datos.iloc[:, 0]
+            datos = datos.dropna()
+            datos = convertir_serie_a_usd(
+                ticker, datos,
+                fecha_inicio.strftime("%Y-%m-%d"), fecha_fin.strftime("%Y-%m-%d"),
+            )
             precios_por_ticker[ticker] = datos.dropna()
         except Exception as e:
             print(f"  Aviso: no se pudo descargar precios de {ticker} ({e}). "
