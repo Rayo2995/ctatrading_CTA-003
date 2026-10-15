@@ -94,7 +94,7 @@ import xgboost as xgb
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from sklearn.metrics import roc_auc_score
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 # ------------------------------------------------------------------
 # CONFIGURACION GENERAL (heredada de v4/v5)
@@ -717,21 +717,100 @@ def _obtener_noticias_google_news(ticker, dias=VENTANA_NOTICIAS_DIAS,
         return _parsear_rss_google_news(resp.content, dias, max_noticias)
     except Exception as e:
         print(f"  Aviso RAG: Google News fallo para {ticker}: {e}")
-        return []
+        return None   # None = la fuente FALLO (distinto de [] = sin noticias)
+
+
+FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
+
+# Finnhub (plan gratis) solo cubre noticias de empresas de EE.UU.: no hay
+# noticias por ETF ni de bolsas extranjeras. Esos tickers se saltan.
+TICKERS_SIN_COBERTURA_FINNHUB = {"SPY", "QQQ", "XLE", "XLV", "GDX"}
+
+
+def _obtener_noticias_finnhub(ticker, dias=VENTANA_NOTICIAS_DIAS,
+                               max_noticias=MAX_NOTICIAS_POR_TICKER):
+    """RETRIEVAL (fuente 2): Finnhub company-news. API gratuita con key
+    (FINNHUB_API_KEY); funciona desde servidores de GitHub Actions.
+    Devuelve None si no se puede consultar (sin key, ticker sin cobertura
+    o error) y [] si la consulta fue exitosa pero no hay noticias."""
+    if not FINNHUB_API_KEY:
+        return None
+    if ticker in TICKERS_SIN_COBERTURA_FINNHUB or ticker.endswith(".KS"):
+        return None
+    ahora = datetime.now(timezone.utc)
+    try:
+        resp = requests.get(
+            "https://finnhub.io/api/v1/company-news",
+            params={"symbol": ticker,
+                    "from": (ahora - timedelta(days=dias)).strftime("%Y-%m-%d"),
+                    "to": ahora.strftime("%Y-%m-%d"),
+                    "token": FINNHUB_API_KEY},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        crudo = resp.json()
+        if not isinstance(crudo, list):
+            raise ValueError(f"respuesta inesperada: {str(crudo)[:100]}")
+        return _normalizar_noticias_finnhub(crudo, max_noticias)
+    except Exception as e:
+        print(f"  Aviso RAG: Finnhub fallo para {ticker}: {e}")
+        return None
+
+
+def _normalizar_noticias_finnhub(crudo, max_noticias):
+    """Convierte la respuesta de Finnhub a [{"titulo","resumen","fecha"}],
+    las mas recientes primero."""
+    noticias = []
+    for item in sorted(crudo, key=lambda x: x.get("datetime", 0), reverse=True):
+        titulo = (item.get("headline") or "").strip()
+        if not titulo:
+            continue
+        ts = item.get("datetime")
+        fecha = datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
+        noticias.append({"titulo": titulo,
+                         "resumen": (item.get("summary") or "").strip()[:300],
+                         "fecha": fecha})
+        if len(noticias) >= max_noticias:
+            break
+    return noticias
+
+
+# Estado de la ultima consulta de noticias por ticker:
+#   "ok"      -> se obtuvieron noticias
+#   "vacio"   -> una fuente respondio bien y confirmo que no hay noticias
+#   "fallo"   -> ninguna fuente pudo consultarse (bloqueo, sin key, etc.)
+ESTADO_NOTICIAS = {}
 
 
 def obtener_noticias_recientes(ticker, dias=VENTANA_NOTICIAS_DIAS,
                                 max_noticias=MAX_NOTICIAS_POR_TICKER):
-    """RETRIEVAL: intenta yfinance y, si no devuelve nada, usa Google News
-    RSS como respaldo. Siempre imprime que fuente respondio."""
+    """RETRIEVAL con cascada de fuentes: yfinance -> Finnhub -> Google News.
+    Registra en ESTADO_NOTICIAS si hubo noticias, si se confirmo que no hay,
+    o si ninguna fuente pudo consultarse (para no reportar "sin noticias"
+    cuando en realidad la consulta fallo)."""
     noticias = _obtener_noticias_yfinance(ticker, dias, max_noticias)
     if noticias:
+        ESTADO_NOTICIAS[ticker] = "ok"
         print(f"  RAG {ticker}: {len(noticias)} noticias (fuente: yfinance).")
         return noticias
-    noticias = _obtener_noticias_google_news(ticker, dias, max_noticias)
-    print(f"  RAG {ticker}: {len(noticias)} noticias (fuente: Google News, "
-          f"respaldo - yfinance no devolvio nada utilizable).")
-    return noticias
+
+    # yfinance devuelve [] tanto si no hay noticias como si Yahoo bloquea,
+    # asi que su respuesta vacia NO confirma nada.
+    confirmado_vacio = False
+    for nombre, fuente in (("Finnhub", _obtener_noticias_finnhub),
+                           ("Google News", _obtener_noticias_google_news)):
+        resultado = fuente(ticker, dias, max_noticias)
+        if resultado is None:
+            continue
+        if resultado:
+            ESTADO_NOTICIAS[ticker] = "ok"
+            print(f"  RAG {ticker}: {len(resultado)} noticias (fuente: {nombre}).")
+            return resultado
+        confirmado_vacio = True
+
+    ESTADO_NOTICIAS[ticker] = "vacio" if confirmado_vacio else "fallo"
+    print(f"  RAG {ticker}: 0 noticias (estado: {ESTADO_NOTICIAS[ticker]}).")
+    return []
 
 
 def construir_prompt_rag(ticker, noticias):
@@ -835,6 +914,10 @@ def veto_cualitativo_rag(ticker):
 
     noticias = obtener_noticias_recientes(ticker)
     if not noticias:
+        if ESTADO_NOTICIAS.get(ticker) == "fallo":
+            return True, (f"No se pudieron obtener noticias de {ticker} (ninguna "
+                           f"fuente respondio desde este servidor) - guardrail "
+                           f"cualitativo NO evaluado, aprobado por defecto (fail-open).")
         return True, (f"Sin noticias recientes para {ticker} en los ultimos "
                        f"{VENTANA_NOTICIAS_DIAS} dias - aprobado por defecto.")
 
