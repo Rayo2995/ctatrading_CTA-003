@@ -11,7 +11,8 @@
 
 ## Guardrails
 
-- Drawdown actual vs. maximo historico: **-54.1%** (umbral circuit breaker: -20.0%)
+- Patrimonio total al momento de la corrida (efectivo + posiciones): **$9,929.67** (maximo historico: $10,199.86)
+- Drawdown actual vs. maximo historico: **-2.6%** (umbral circuit breaker: -20.0%)
 - Circuit breaker: 🟢 inactivo
 
 ## Ranking del universo evaluado esta semana
@@ -56,12 +57,12 @@
 
 ## Guardrail cualitativo (RAG) — noticias revisadas
 
-- **QQQ**: [RAG/openrouter] No hay noticias materiales negativas recientes sobre QQQ; solo comentarios de composición, opiniones y ruido de mercado normal.
-- **AAPL**: [RAG/openrouter] No se detectaron noticias materiales negativas recientes.
-- **TSM**: [RAG/openrouter] No hay noticias materiales y negativas que afecten a TSMC esta semana
-- **XLE**: [RAG/openrouter] No material negative news detected; only routine ETF adjustments and sector updates.
-- **GDX**: [RAG/openrouter] No se detectaron noticias materiales y negativas en los ultimos 7 dias.
-- **NEM**: [RAG/openrouter] No se encontraron noticias materiales negativas recientes sobre NEM; las referencias son a resultados trimestrales esperados, movimientos normales de precio y noticias de mercado general.
+- **QQQ**: [RAG/openrouter] No hay noticias materiales negativas recientes; solo comentarios de mercado, analisis de composicion del indice y movimientos normales de precio.
+- **AAPL**: [RAG/openrouter] No se detectó ninguna noticia negativa material sobre AAPL en los últimos 7 días.
+- **TSM**: Error en guardrail RAG (respuesta sin JSON valido: '{"aprobado": true, "motivo": "No se encontró noticia material negativa como frau') - aprobado por defecto (fail-open).
+- **XLE**: [RAG/openrouter] No existen noticias materiales negativas recientes que justifiquen evitar la compra de XLE.
+- **GDX**: [RAG/openrouter] No hay noticias materiales negativas recientes, solo análisis y recomendaciones de compra.
+- **NEM**: [RAG/openrouter] No se detectaron noticias materiales negativas en los últimos 7 días.
 
 ## Seleccion final (BUY de esta semana)
 
