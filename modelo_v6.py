@@ -884,13 +884,39 @@ def _consultar_openrouter(prompt_usuario):
                 {"role": "system", "content": _SYSTEM_PROMPT_RAG},
                 {"role": "user", "content": prompt_usuario},
             ],
-            "max_tokens": 200,
+            # FIX: con 200 los modelos "razonadores" gastaban todo en pensar
+            # y devolvian content=None. 1000 deja espacio para pensar y
+            # luego responder el JSON.
+            "max_tokens": 1000,
         },
-        timeout=30,
+        timeout=60,
     )
     respuesta.raise_for_status()
     data = respuesta.json()
-    return data["choices"][0]["message"]["content"]
+    eleccion = data["choices"][0]
+    contenido = (eleccion.get("message") or {}).get("content")
+    if not contenido or not contenido.strip():
+        modelo_real = data.get("model", "desconocido")
+        raise ValueError(f"el modelo {modelo_real} devolvio respuesta vacia "
+                         f"(finish_reason={eleccion.get('finish_reason')})")
+    return contenido
+
+
+RAG_INTENTOS = 3   # los modelos gratuitos fallan de forma intermitente
+
+
+def _extraer_json_rag(texto):
+    """Extrae el objeto JSON de la respuesta del LLM aunque venga con
+    ```json, o con texto antes/despues."""
+    texto = (texto or "").strip().replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        pass
+    coincidencia = re.search(r"\{.*?\}", texto, re.DOTALL)
+    if coincidencia:
+        return json.loads(coincidencia.group(0))
+    raise ValueError(f"respuesta sin JSON valido: {texto[:80]!r}")
 
 
 def veto_cualitativo_rag(ticker):
@@ -923,22 +949,29 @@ def veto_cualitativo_rag(ticker):
 
     prompt_usuario = construir_prompt_rag(ticker, noticias)
 
-    try:
-        if RAG_PROVEEDOR == "openrouter":
-            texto = _consultar_openrouter(prompt_usuario)
-        else:
-            texto = _consultar_anthropic(prompt_usuario)
+    ultimo_error = None
+    for intento in range(1, RAG_INTENTOS + 1):
+        try:
+            if RAG_PROVEEDOR == "openrouter":
+                texto = _consultar_openrouter(prompt_usuario)
+            else:
+                texto = _consultar_anthropic(prompt_usuario)
 
-        texto = texto.strip().replace("```json", "").replace("```", "").strip()
-        resultado = json.loads(texto)
-        aprobado = bool(resultado.get("aprobado", True))
-        motivo = str(resultado.get("motivo", "Sin motivo especificado por el modelo."))
-        return aprobado, f"[RAG/{RAG_PROVEEDOR}] {motivo}"
+            resultado = _extraer_json_rag(texto)
+            aprobado = bool(resultado.get("aprobado", True))
+            motivo = str(resultado.get("motivo", "Sin motivo especificado por el modelo."))
+            return aprobado, f"[RAG/{RAG_PROVEEDOR}] {motivo}"
 
-    except Exception as e:
-        print(f"  Aviso RAG ({RAG_PROVEEDOR}): fallo la consulta para {ticker} ({e}). "
-              f"Fail-open: se aprueba por defecto.")
-        return True, f"Error en guardrail RAG ({e}) - aprobado por defecto (fail-open)."
+        except Exception as e:
+            ultimo_error = e
+            print(f"  Aviso RAG ({RAG_PROVEEDOR}): intento {intento}/{RAG_INTENTOS} "
+                  f"fallo para {ticker} ({e}).")
+            if intento < RAG_INTENTOS:
+                time.sleep(3 * intento)
+
+    print(f"  Aviso RAG ({RAG_PROVEEDOR}): agotados los intentos para {ticker}. "
+          f"Fail-open: se aprueba por defecto.")
+    return True, f"Error en guardrail RAG ({ultimo_error}) - aprobado por defecto (fail-open)."
 
 
 # ------------------------------------------------------------------
