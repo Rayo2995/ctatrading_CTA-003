@@ -836,6 +836,8 @@ _SYSTEM_PROMPT_RAG = (
     "precio, opiniones de analistas, o ruido general de mercado NO deben "
     "bloquear la compra - eso ya lo evalua por separado un modelo "
     "cuantitativo. Solo vetar ante señales genuinamente graves.\n\n"
+    "Escribe SIEMPRE el campo \"motivo\" en español, aunque las noticias "
+    "esten en ingles.\n\n"
     "Responde EXCLUSIVAMENTE con un JSON valido, sin texto adicional antes "
     "ni despues, con este formato exacto:\n"
     '{"aprobado": true o false, "motivo": "explicacion breve en una linea"}'
@@ -1375,7 +1377,7 @@ def enviar_correo_automatico(asunto, cuerpo):
 
 def generar_informe_semanal(tabla, resultados, ordenes, estado, bloque_json,
                              circuit_breaker_activo, ensamble, resultado_envio,
-                             errores_validacion=None):
+                             errores_validacion=None, patrimonio_total=None):
     """Compila la corrida completa (ranking, selecciones, guardrails,
     capital, JSON final) en un archivo Markdown legible. Se genera en
     TODA corrida (oficial o de prueba) para dejar rastro documentado del
@@ -1433,10 +1435,21 @@ def generar_informe_semanal(tabla, resultados, ordenes, estado, bloque_json,
     # --- Guardrails --------------------------------------------------------
     lineas.append("## Guardrails")
     lineas.append("")
-    drawdown_actual = (estado.get("capital_disponible", CAPITAL_TOTAL) /
-                        estado.get("capital_maximo_historico", CAPITAL_TOTAL) - 1) * 100
-    lineas.append(f"- Drawdown actual vs. maximo historico: **{drawdown_actual:.1f}%** "
-                   f"(umbral circuit breaker: {CIRCUIT_BREAKER_DRAWDOWN_PCT}%)")
+    # FIX: el drawdown se mide sobre el PATRIMONIO TOTAL (efectivo + valor de
+    # las posiciones), igual que el circuit breaker. Antes se dividia solo el
+    # efectivo restante tras las compras entre el maximo historico, lo que
+    # mostraba caidas falsas (p. ej. -54%) aunque el patrimonio estuviera bien.
+    maximo_historico = estado.get("capital_maximo_historico", CAPITAL_TOTAL)
+    if patrimonio_total is not None:
+        drawdown_actual = (patrimonio_total / maximo_historico - 1) * 100
+        lineas.append(f"- Patrimonio total al momento de la corrida (efectivo + "
+                       f"posiciones): **${patrimonio_total:,.2f}** "
+                       f"(maximo historico: ${maximo_historico:,.2f})")
+        lineas.append(f"- Drawdown actual vs. maximo historico: **{drawdown_actual:.1f}%** "
+                       f"(umbral circuit breaker: {CIRCUIT_BREAKER_DRAWDOWN_PCT}%)")
+    else:
+        lineas.append(f"- Drawdown actual: no disponible en esta corrida "
+                       f"(umbral circuit breaker: {CIRCUIT_BREAKER_DRAWDOWN_PCT}%)")
     lineas.append(f"- Circuit breaker: {'🔴 **ACTIVO** (todas las compras pausadas)' if circuit_breaker_activo else '🟢 inactivo'}")
     lineas.append("")
 
@@ -1618,6 +1631,11 @@ if __name__ == "__main__":
 
     print("\n=== GUARDRAILS ===")
     circuit_breaker_activo, estado = verificar_circuit_breaker(estado, precios_actuales_por_ticker)
+    # Patrimonio total ANTES de las compras de esta semana (para el informe).
+    patrimonio_total = estado.get("capital_disponible", CAPITAL_TOTAL) + sum(
+        cantidad * precios_actuales_por_ticker.get(ticker, 0)
+        for ticker, cantidad in estado.get("posiciones", {}).items()
+    )
     estado = actualizar_monitor_hit_rate(estado, precios_actuales_por_ticker)
 
     if circuit_breaker_activo:
@@ -1714,6 +1732,7 @@ if __name__ == "__main__":
         tabla, resultados, ordenes, estado, bloque_json,
         circuit_breaker_activo, ensamble, resultado_envio,
         errores_validacion=errores,
+        patrimonio_total=patrimonio_total,
     )
 
     # Codigo de salida: solo los casos que representan un problema REAL
