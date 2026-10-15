@@ -83,7 +83,10 @@ import os
 import time
 import joblib
 import smtplib
+import re
 import requests
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -612,9 +615,9 @@ def cargar_o_entrenar_ensamble(dataset_pool):
 # NUEVO v6 - PUNTO 4 (capa 3): hook de guardrail cualitativo (RAG)
 # ------------------------------------------------------------------
 
-def obtener_noticias_recientes(ticker, dias=VENTANA_NOTICIAS_DIAS,
+def _obtener_noticias_yfinance(ticker, dias=VENTANA_NOTICIAS_DIAS,
                                 max_noticias=MAX_NOTICIAS_POR_TICKER):
-    """RETRIEVAL: trae noticias recientes de yfinance para un ticker y
+    """RETRIEVAL (fuente 1): trae noticias recientes de yfinance para un ticker y
     filtra solo las de los ultimos `dias`. Parseo defensivo porque el
     formato de yf.Ticker(x).news ha cambiado entre versiones de la
     libreria (algunas anidan los campos bajo "content", otras no)."""
@@ -623,6 +626,11 @@ def obtener_noticias_recientes(ticker, dias=VENTANA_NOTICIAS_DIAS,
     except Exception as e:
         print(f"  Aviso RAG: no se pudo obtener noticias para {ticker}: {e}")
         return []
+
+    # Diagnostico: yfinance devuelve [] SIN error cuando Yahoo bloquea o
+    # no responde bien (tipico en servidores de GitHub Actions). Este
+    # log permite distinguir "no hay noticias" de "Yahoo no respondio".
+    print(f"  RAG {ticker}: yfinance devolvio {len(crudo or [])} items crudos.")
 
     noticias = []
     ahora = datetime.now(timezone.utc)
@@ -651,6 +659,78 @@ def obtener_noticias_recientes(ticker, dias=VENTANA_NOTICIAS_DIAS,
         if len(noticias) >= max_noticias:
             break
 
+    return noticias
+
+
+# Texto con el que se busca cada activo en Google News (el ticker solo da
+# malos resultados, sobre todo con los codigos coreanos como 005930.KS).
+NOMBRE_BUSQUEDA_NOTICIAS = {
+    "SPY": "S&P 500 SPY ETF", "QQQ": "Nasdaq 100 QQQ ETF", "KO": "Coca-Cola stock",
+    "BRK-B": "Berkshire Hathaway", "AAPL": "Apple stock", "MSFT": "Microsoft stock",
+    "NVDA": "Nvidia stock", "005930.KS": "Samsung Electronics",
+    "000660.KS": "SK Hynix", "TSM": "TSMC Taiwan Semiconductor",
+    "XLE": "energy sector XLE ETF", "TRGP": "Targa Resources",
+    "XLV": "healthcare sector XLV ETF", "MRK": "Merck stock",
+    "GDX": "gold miners GDX ETF", "NEM": "Newmont gold",
+}
+
+
+def _parsear_rss_google_news(contenido_xml, dias, max_noticias):
+    """Convierte el RSS de Google News en la misma estructura que usa el
+    resto del pipeline: [{"titulo", "resumen", "fecha"}]."""
+    ahora = datetime.now(timezone.utc)
+    noticias = []
+    for item in ET.fromstring(contenido_xml).iter("item"):
+        titulo = (item.findtext("title") or "").strip()
+        if not titulo:
+            continue
+        fecha = None
+        try:
+            fecha = parsedate_to_datetime(item.findtext("pubDate") or "")
+            if fecha.tzinfo is None:
+                fecha = fecha.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            fecha = None
+        if fecha is not None and (ahora - fecha).days > dias:
+            continue
+        resumen = re.sub(r"<[^>]+>", " ", item.findtext("description") or "")
+        resumen = re.sub(r"\s+", " ", resumen).strip()[:300]
+        noticias.append({"titulo": titulo, "resumen": resumen, "fecha": fecha})
+        if len(noticias) >= max_noticias:
+            break
+    return noticias
+
+
+def _obtener_noticias_google_news(ticker, dias=VENTANA_NOTICIAS_DIAS,
+                                   max_noticias=MAX_NOTICIAS_POR_TICKER):
+    """RETRIEVAL (fuente 2, respaldo): Google News RSS. Gratis, sin API key
+    y suele funcionar desde GitHub Actions cuando Yahoo no responde."""
+    consulta = NOMBRE_BUSQUEDA_NOTICIAS.get(ticker, ticker)
+    try:
+        resp = requests.get(
+            "https://news.google.com/rss/search",
+            params={"q": f"{consulta} when:{dias}d", "hl": "en-US",
+                    "gl": "US", "ceid": "US:en"},
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=15,
+        )
+        resp.raise_for_status()
+        return _parsear_rss_google_news(resp.content, dias, max_noticias)
+    except Exception as e:
+        print(f"  Aviso RAG: Google News fallo para {ticker}: {e}")
+        return []
+
+
+def obtener_noticias_recientes(ticker, dias=VENTANA_NOTICIAS_DIAS,
+                                max_noticias=MAX_NOTICIAS_POR_TICKER):
+    """RETRIEVAL: intenta yfinance y, si no devuelve nada, usa Google News
+    RSS como respaldo. Siempre imprime que fuente respondio."""
+    noticias = _obtener_noticias_yfinance(ticker, dias, max_noticias)
+    if noticias:
+        print(f"  RAG {ticker}: {len(noticias)} noticias (fuente: yfinance).")
+        return noticias
+    noticias = _obtener_noticias_google_news(ticker, dias, max_noticias)
+    print(f"  RAG {ticker}: {len(noticias)} noticias (fuente: Google News, "
+          f"respaldo - yfinance no devolvio nada utilizable).")
     return noticias
 
 
