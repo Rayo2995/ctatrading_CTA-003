@@ -25,11 +25,11 @@
 | QQQ       |          728.95 |                 50.80 |                   2.64 |    -20.10 |     -31.14 |                     0.05 |
 | XLE       |           67.63 |                 49.10 |                   0.99 |    -21.75 |     -32.79 |                     0.06 |
 | TRGP      |          290.91 |                 49.00 |                   4.42 |    -18.32 |     -29.36 |                     0.06 |
-| 005930.KS |          173.09 |                 48.90 |                   4.31 |    -18.43 |     -29.47 |                     0.07 |
+| 005930.KS |          173.22 |                 48.90 |                   4.31 |    -18.43 |     -29.47 |                     0.07 |
 | NVDA      |          221.30 |                 44.90 |                  10.11 |    -12.64 |     -23.68 |                     0.05 |
 | MSFT      |          533.69 |                 42.20 |                   1.70 |    -21.04 |     -32.08 |                     0.04 |
 | KO        |           91.78 |                 40.10 |                   0.65 |    -22.09 |     -33.13 |                     0.02 |
-| 000660.KS |         1058.71 |                 39.00 |                   3.83 |    -18.91 |     -29.95 |                     0.14 |
+| 000660.KS |         1059.47 |                 39.00 |                   3.83 |    -18.91 |     -29.95 |                     0.14 |
 | BRK-B     |          526.35 |                 38.70 |                   0.93 |    -21.81 |     -32.85 |                     0.06 |
 | XLV       |          173.96 |                 36.50 |                   1.08 |    -21.66 |     -32.70 |                     0.04 |
 | MRK       |          147.37 |                 27.00 |                  -0.19 |    -22.93 |     -33.97 |                     0.04 |
@@ -56,12 +56,12 @@
 
 ## Guardrail cualitativo (RAG) — noticias revisadas
 
-- **QQQ**: [RAG/openrouter] No hay evidencia de noticias materialmente negativas que justifiquen evitar la compra esta semana
-- **AAPL**: [RAG/openrouter] No se detectan noticias materiales y negativas recientes; solo preocupaciones de producto y ruido de mercado sin vetar.
-- **TSM**: [RAG/openrouter] No hay noticias materiales negativas específicas de TSM; solo selloff general de IA y resultados mixtos sin fraude, investigacion regulatoria o quiebra.
-- **XLE**: [RAG/openrouter] No se identifican señales materiales y negativas recientes; las noticias son principalmente informativas sobre adiciones de acciones mayores al fondo y actualizaciones de mercado neutras.
-- **GDX**: [RAG/openrouter] No hay noticias materiales negativas en los ultimos 7 dias; solo cobertura rutinaria, comparativas y analisis positivos del ETF.
-- **NEM**: [RAG/openrouter] No hay noticias materiales negativas recientes que justifiquen evitar la compra de NEM.
+- **QQQ**: [RAG/openrouter] No hay noticias materiales negativas recientes sobre QQQ; solo comentarios de composición, opiniones y ruido de mercado normal.
+- **AAPL**: [RAG/openrouter] No se detectaron noticias materiales negativas recientes.
+- **TSM**: [RAG/openrouter] No hay noticias materiales y negativas que afecten a TSMC esta semana
+- **XLE**: [RAG/openrouter] No material negative news detected; only routine ETF adjustments and sector updates.
+- **GDX**: [RAG/openrouter] No se detectaron noticias materiales y negativas en los ultimos 7 dias.
+- **NEM**: [RAG/openrouter] No se encontraron noticias materiales negativas recientes sobre NEM; las referencias son a resultados trimestrales esperados, movimientos normales de precio y noticias de mercado general.
 
 ## Seleccion final (BUY de esta semana)
 
