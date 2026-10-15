@@ -56,12 +56,12 @@
 
 ## Guardrail cualitativo (RAG) — noticias revisadas
 
-- **QQQ**: Error en guardrail RAG (Expecting value: line 1 column 1 (char 0)) - aprobado por defecto (fail-open).
-- **AAPL**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
-- **TSM**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
-- **XLE**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
-- **GDX**: [RAG/openrouter] No se detectan noticias materiales negativas; las fuentes actuales son análisis comparativos y recomendaciones de compra.
-- **NEM**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
+- **QQQ**: [RAG/openrouter] No hay evidencia de noticias materialmente negativas que justifiquen evitar la compra esta semana
+- **AAPL**: [RAG/openrouter] No se detectan noticias materiales y negativas recientes; solo preocupaciones de producto y ruido de mercado sin vetar.
+- **TSM**: [RAG/openrouter] No hay noticias materiales negativas específicas de TSM; solo selloff general de IA y resultados mixtos sin fraude, investigacion regulatoria o quiebra.
+- **XLE**: [RAG/openrouter] No se identifican señales materiales y negativas recientes; las noticias son principalmente informativas sobre adiciones de acciones mayores al fondo y actualizaciones de mercado neutras.
+- **GDX**: [RAG/openrouter] No hay noticias materiales negativas en los ultimos 7 dias; solo cobertura rutinaria, comparativas y analisis positivos del ETF.
+- **NEM**: [RAG/openrouter] No hay noticias materiales negativas recientes que justifiquen evitar la compra de NEM.
 
 ## Seleccion final (BUY de esta semana)
 
