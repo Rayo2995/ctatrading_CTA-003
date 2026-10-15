@@ -44,6 +44,7 @@ jobs:
           EMAIL_REMITENTE: ${{ secrets.EMAIL_REMITENTE }}
           EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           # Opcional: solo si algun dia cambian RAG_PROVEEDOR a "anthropic"
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # La corrida programada (cron, viernes 8am) SIEMPRE es la
