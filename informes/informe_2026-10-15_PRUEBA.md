@@ -56,12 +56,12 @@
 
 ## Guardrail cualitativo (RAG) — noticias revisadas
 
-- **QQQ**: Sin noticias recientes para QQQ en los ultimos 7 dias - aprobado por defecto.
-- **AAPL**: Sin noticias recientes para AAPL en los ultimos 7 dias - aprobado por defecto.
-- **TSM**: Sin noticias recientes para TSM en los ultimos 7 dias - aprobado por defecto.
-- **XLE**: Sin noticias recientes para XLE en los ultimos 7 dias - aprobado por defecto.
-- **GDX**: Sin noticias recientes para GDX en los ultimos 7 dias - aprobado por defecto.
-- **NEM**: Sin noticias recientes para NEM en los ultimos 7 dias - aprobado por defecto.
+- **QQQ**: Error en guardrail RAG (Expecting value: line 1 column 1 (char 0)) - aprobado por defecto (fail-open).
+- **AAPL**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
+- **TSM**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
+- **XLE**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
+- **GDX**: [RAG/openrouter] No se detectan noticias materiales negativas; las fuentes actuales son análisis comparativos y recomendaciones de compra.
+- **NEM**: Error en guardrail RAG ('NoneType' object has no attribute 'strip') - aprobado por defecto (fail-open).
 
 ## Seleccion final (BUY de esta semana)
 
