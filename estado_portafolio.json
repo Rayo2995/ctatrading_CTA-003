@@ -1,6 +1,6 @@
 {
-  "capital_disponible": 7140.68,
-  "semana_actual": 7,
+  "capital_disponible": 4696.52,
+  "semana_actual": 8,
   "historial": [
     {
       "semana": 1,
@@ -64,15 +64,49 @@
       "fecha": "2026-10-09",
       "ordenes": [],
       "evaluado_hit_rate": false
+    },
+    {
+      "semana": 8,
+      "fecha": "2026-10-16",
+      "ordenes": [
+        {
+          "ticker": "NVDA",
+          "cantidad": 2,
+          "precio_compra_referencia": 217.23
+        },
+        {
+          "ticker": "TSM",
+          "cantidad": 1,
+          "precio_compra_referencia": 422.25
+        },
+        {
+          "ticker": "XLE",
+          "cantidad": 6,
+          "precio_compra_referencia": 66.56
+        },
+        {
+          "ticker": "GDX",
+          "cantidad": 7,
+          "precio_compra_referencia": 87.02
+        },
+        {
+          "ticker": "NEM",
+          "cantidad": 5,
+          "precio_compra_referencia": 115.79
+        }
+      ],
+      "evaluado_hit_rate": false
     }
   ],
   "capital_maximo_historico": 10199.86,
   "circuit_breaker_activo": false,
   "hit_rate_historico": [],
   "posiciones": {
-    "NVDA": 4,
+    "NVDA": 6,
     "005930.KS": 4,
-    "TSM": 1,
-    "NEM": 7
+    "TSM": 2,
+    "NEM": 12,
+    "XLE": 6,
+    "GDX": 7
   }
 }
