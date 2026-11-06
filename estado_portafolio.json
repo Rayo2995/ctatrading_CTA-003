@@ -1,6 +1,6 @@
 {
   "capital_disponible": 2646.8600000000006,
-  "semana_actual": 10,
+  "semana_actual": 11,
   "historial": [
     {
       "semana": 1,
@@ -33,25 +33,25 @@
       "semana": 2,
       "fecha": "2026-09-24",
       "ordenes": [],
-      "evaluado_hit_rate": false
+      "evaluado_hit_rate": true
     },
     {
       "semana": 3,
       "fecha": "2026-09-25",
       "ordenes": [],
-      "evaluado_hit_rate": false
+      "evaluado_hit_rate": true
     },
     {
       "semana": 4,
       "fecha": "2026-09-25",
       "ordenes": [],
-      "evaluado_hit_rate": false
+      "evaluado_hit_rate": true
     },
     {
       "semana": 5,
       "fecha": "2026-09-25",
       "ordenes": [],
-      "evaluado_hit_rate": false
+      "evaluado_hit_rate": true
     },
     {
       "semana": 6,
@@ -144,6 +144,12 @@
           "precio_compra_referencia": 111.8
         }
       ],
+      "evaluado_hit_rate": false
+    },
+    {
+      "semana": 11,
+      "fecha": "2026-11-06",
+      "ordenes": [],
       "evaluado_hit_rate": false
     }
   ],
