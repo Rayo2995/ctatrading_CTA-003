@@ -1,6 +1,6 @@
 {
-  "capital_disponible": 2646.8600000000006,
-  "semana_actual": 11,
+  "capital_disponible": 2483.1800000000007,
+  "semana_actual": 12,
   "historial": [
     {
       "semana": 1,
@@ -57,7 +57,7 @@
       "semana": 6,
       "fecha": "2026-10-02",
       "ordenes": [],
-      "evaluado_hit_rate": false
+      "evaluado_hit_rate": true
     },
     {
       "semana": 7,
@@ -151,6 +151,18 @@
       "fecha": "2026-11-06",
       "ordenes": [],
       "evaluado_hit_rate": false
+    },
+    {
+      "semana": 12,
+      "fecha": "2026-11-13",
+      "ordenes": [
+        {
+          "ticker": "GDX",
+          "cantidad": 2,
+          "precio_compra_referencia": 81.84
+        }
+      ],
+      "evaluado_hit_rate": false
     }
   ],
   "capital_maximo_historico": 10199.86,
@@ -164,6 +176,6 @@
     "TSM": 2,
     "NEM": 17,
     "XLE": 12,
-    "GDX": 15
+    "GDX": 17
   }
 }
