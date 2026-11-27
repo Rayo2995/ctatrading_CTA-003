@@ -1,6 +1,6 @@
 {
-  "capital_disponible": 2067.080000000001,
-  "semana_actual": 13,
+  "capital_disponible": 1917.7800000000009,
+  "semana_actual": 14,
   "historial": [
     {
       "semana": 1,
@@ -95,7 +95,7 @@
           "precio_compra_referencia": 115.79
         }
       ],
-      "evaluado_hit_rate": false
+      "evaluado_hit_rate": true
     },
     {
       "semana": 9,
@@ -180,15 +180,28 @@
         }
       ],
       "evaluado_hit_rate": false
+    },
+    {
+      "semana": 14,
+      "fecha": "2026-11-27",
+      "ordenes": [
+        {
+          "ticker": "NVDA",
+          "cantidad": 1,
+          "precio_compra_referencia": 149.3
+        }
+      ],
+      "evaluado_hit_rate": false
     }
   ],
   "capital_maximo_historico": 10199.86,
   "circuit_breaker_activo": false,
   "hit_rate_historico": [
-    0.25
+    0.25,
+    0.0
   ],
   "posiciones": {
-    "NVDA": 8,
+    "NVDA": 9,
     "005930.KS": 4,
     "TSM": 2,
     "NEM": 19,
